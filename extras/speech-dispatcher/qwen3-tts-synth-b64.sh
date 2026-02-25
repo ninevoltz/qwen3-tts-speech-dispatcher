@@ -8,6 +8,8 @@ SOCKET_PATH="${QWEN_SPEECHD_SOCKET:-/tmp/qwen3-tts-speechd.sock}"
 READY_TIMEOUT_SEC="${QWEN_SPEECHD_READY_TIMEOUT_SEC:-90}"
 LOG_FILE="${QWEN_SPEECHD_LOG:-/tmp/qwen3-tts-speechd.log}"
 LAST_WAV="${QWEN_SPEECHD_LAST_WAV:-/tmp/qwen3-tts-last.wav}"
+ASYNC_PLAYBACK="${QWEN_SPEECHD_ASYNC_PLAYBACK:-1}"
+PLAYBACK_LOCK="${QWEN_SPEECHD_PLAYBACK_LOCK:-/tmp/qwen3-tts-playback.lock}"
 
 cd "${REPO_ROOT}"
 
@@ -34,7 +36,6 @@ fi
 
 WAV_OUT="$(mktemp --tmpdir qwen3-speechd-XXXXXX.wav)"
 cleanup() {
-  pkill -P $$ >/dev/null 2>&1 || true
   rm -f "${WAV_OUT}"
 }
 trap cleanup EXIT INT TERM
@@ -100,31 +101,52 @@ fi
 
 cp -f "${WAV_OUT}" "${LAST_WAV}" >/dev/null 2>&1 || true
 
-play_ok=1
-if [[ -n "${QWEN_SPEECHD_PLAY_CMD:-}" ]]; then
-  printf '[%s] playback: custom cmd\n' "$(date -Is)" >> "${LOG_FILE}" 2>/dev/null || true
-  if ${QWEN_SPEECHD_PLAY_CMD} "${WAV_OUT}" >/dev/null 2>&1; then
-    play_ok=0
+play_audio_file() {
+  local wav_path="$1"
+  local play_ok=1
+  if [[ -n "${QWEN_SPEECHD_PLAY_CMD:-}" ]]; then
+    printf '[%s] playback: custom cmd\n' "$(date -Is)"
+    if ${QWEN_SPEECHD_PLAY_CMD} "${wav_path}" >/dev/null 2>&1; then
+      play_ok=0
+    fi
   fi
-fi
-if [[ ${play_ok} -ne 0 ]] && command -v paplay >/dev/null 2>&1; then
-  printf '[%s] playback: paplay\n' "$(date -Is)" >> "${LOG_FILE}" 2>/dev/null || true
-  if paplay "${WAV_OUT}" >/dev/null 2>&1; then
-    play_ok=0
+  if [[ ${play_ok} -ne 0 ]] && command -v paplay >/dev/null 2>&1; then
+    printf '[%s] playback: paplay\n' "$(date -Is)"
+    if paplay "${wav_path}" >/dev/null 2>&1; then
+      play_ok=0
+    fi
   fi
-fi
-if [[ ${play_ok} -ne 0 ]] && command -v aplay >/dev/null 2>&1; then
-  printf '[%s] playback: aplay\n' "$(date -Is)" >> "${LOG_FILE}" 2>/dev/null || true
-  if aplay -q "${WAV_OUT}" >/dev/null 2>&1; then
-    play_ok=0
+  if [[ ${play_ok} -ne 0 ]] && command -v aplay >/dev/null 2>&1; then
+    printf '[%s] playback: aplay\n' "$(date -Is)"
+    if aplay -q "${wav_path}" >/dev/null 2>&1; then
+      play_ok=0
+    fi
   fi
-fi
-if [[ ${play_ok} -ne 0 ]] && command -v play >/dev/null 2>&1; then
-  printf '[%s] playback: play\n' "$(date -Is)" >> "${LOG_FILE}" 2>/dev/null || true
-  if play -q "${WAV_OUT}" >/dev/null 2>&1; then
-    play_ok=0
+  if [[ ${play_ok} -ne 0 ]] && command -v play >/dev/null 2>&1; then
+    printf '[%s] playback: play\n' "$(date -Is)"
+    if play -q "${wav_path}" >/dev/null 2>&1; then
+      play_ok=0
+    fi
   fi
-fi
-if [[ ${play_ok} -ne 0 ]]; then
-  printf '[%s] playback failed for all commands\n' "$(date -Is)" >> "${LOG_FILE}" 2>/dev/null || true
+  if [[ ${play_ok} -ne 0 ]]; then
+    printf '[%s] playback failed for all commands\n' "$(date -Is)"
+    return 1
+  fi
+  return 0
+}
+
+if [[ "${ASYNC_PLAYBACK}" == "1" || "${ASYNC_PLAYBACK,,}" == "true" || "${ASYNC_PLAYBACK,,}" == "yes" || "${ASYNC_PLAYBACK,,}" == "on" ]]; then
+  PLAY_WAV="$(mktemp --tmpdir qwen3-speechd-play-XXXXXX.wav)"
+  cp -f "${WAV_OUT}" "${PLAY_WAV}"
+  (
+    if command -v flock >/dev/null 2>&1; then
+      exec 9>"${PLAYBACK_LOCK}"
+      flock 9
+    fi
+    play_audio_file "${PLAY_WAV}"
+    rm -f "${PLAY_WAV}"
+  ) >> "${LOG_FILE}" 2>&1 &
+  printf '[%s] playback queued async pid=%s\n' "$(date -Is)" "$!" >> "${LOG_FILE}" 2>/dev/null || true
+else
+  play_audio_file "${WAV_OUT}" >> "${LOG_FILE}" 2>&1 || true
 fi
