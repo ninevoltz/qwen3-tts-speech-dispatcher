@@ -1,0 +1,41 @@
+[Unit]
+Description=Qwen3-TTS Natural Voice local daemon for speech-dispatcher
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/john/git-projects/qwen3-tts-speech-dispatcher/
+
+  # Available modes:
+  # custom_voice        -> fixed predefined speaker (e.g. QWEN_SPEECHD_SPEAKER=Serena/Aiden/etc)
+  # voice_design        -> natural-language voice description prompt
+  # voice_clone_prompt  -> uses saved .pt cloned voice prompt file
+Environment=QWEN_SPEECHD_MODE=voice_design
+
+Environment=QWEN_SPEECHD_MAX_NEW_TOKENS=2048
+Environment=QWEN_SPEECHD_MAX_NEW_TOKENS_VOICE_DESIGN=192
+Environment=QWEN_SPEECHD_NORMALIZE_VOICE_DESIGN_TEXT=1
+Environment=OMP_NUM_THREADS=16
+Environment=MKL_NUM_THREADS=16
+Environment=QWEN_SPEECHD_INSTRUCT="Speak clearly in a female voice. Spell out acronyms and initialisms. Expand part/model numbers character-by-character. Do not pause on hyphenated phrases."
+Environment=QWEN_SPEECHD_SPEAKER=Serena
+Environment=QWEN_SPEECHD_RESPECT_SD_VOICE=0
+Environment=QWEN_SPEECHD_LANGUAGE=english
+Environment=QWEN_SPEECHD_RESPECT_SD_LANGUAGE=0
+Environment=QWEN_SPEECHD_NORMALIZE_ENGLISH_TEXT=1
+Environment=QWEN_SPEECHD_SEED=1974045
+Environment=QWEN_SPEECHD_DO_SAMPLE=0
+Environment=QWEN_SPEECHD_SUBTALKER_DOSAMPLE=0
+Environment=QWEN_SPEECHD_MAX_NEW_TOKENS_CLONE=512
+Environment=QWEN_SPEECHD_VOICE_DESIGN_CHECKPOINT=Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign
+Environment=QWEN_SPEECHD_VOICE_CLONE_CHECKPOINT=Qwen/Qwen3-TTS-12Hz-1.7B-Base
+Environment=QWEN_SPEECHD_VOICE_CLONE_PROMPT_FILE=/home/john/voice_clone_prompt_qq4pttw2.pt
+#Environment=QWEN_SPEECHD_VOICE_CLONE_CHECKPOINT=/home/john/.cache/huggingface/hub/models--Qwen--Qwen3-TTS-12Hz-0.6B-Base/snapshots/c27fe8aa05b732b1376d0f6a1e522fbccb84abbd
+#Environment=QWEN_SPEECHD_VOICE_CLONE_PROMPT_FILE=/home/john/voice_clone_prompt_5jorzmiu.pt
+
+ExecStart=/home/john/anaconda3/envs/qwen3-tts/bin/python -m qwen_tts.cli.speechd_daemon --socket /tmp/qwen3-tts-speechd.sock --device cuda --dtype float32
+Restart=always
+RestartSec=1
+
+[Install]
+WantedBy=default.target
