@@ -4,7 +4,7 @@ After=network.target
 
 [Service]
 Type=simple
-WorkingDirectory=/home/john/git-projects/qwen3-tts-speech-dispatcher/
+WorkingDirectory=/home/john/git-projects/qwen3-tts-speech-dispatcher
 
   # Available modes:
   # custom_voice        -> fixed predefined speaker (e.g. QWEN_SPEECHD_SPEAKER=Serena/Aiden/etc)

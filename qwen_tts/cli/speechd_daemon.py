@@ -242,16 +242,21 @@ def _handle_conn(
             elif mode == "voice_clone_prompt":
                 if not voice_clone_prompt_items:
                     raise ValueError("voice_clone_prompt mode requires a loaded prompt file")
-                _append_daemon_log(
-                    f'daemon synth mode=voice_clone_prompt lang={language} chars={len(text)} text="{text}"'
+                # Guardrail for clone mode: avoid very long generations on short
+                # prompts, which often indicates EOS was not reached.
+                effective_max_new_tokens_clone = min(
+                    max_new_tokens_clone,
+                    max(128, len(text) * 6),
                 )
+                _append_daemon_log(
+                    f'daemon synth mode=voice_clone_prompt lang={language} chars={len(text)} max_new_tokens={effective_max_new_tokens_clone} text="{text}"'
+                )
+                # Match app.py clone path more closely: do not force sampling flags.
                 wavs, sr = tts.generate_voice_clone(
                     text=text,
                     language=language,
                     voice_clone_prompt=voice_clone_prompt_items,
-                    do_sample=do_sample,
-                    subtalker_dosample=subtalker_dosample,
-                    max_new_tokens=max_new_tokens_clone,
+                    max_new_tokens=effective_max_new_tokens_clone,
                     non_streaming_mode=True,
                 )
             else:
