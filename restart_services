@@ -1,0 +1,5 @@
+#!/bin/sh
+
+systemctl --user daemon-reload
+systemctl --user restart qwen3-tts-daemon.service
+systemctl --user restart speech-dispatcher.socket
