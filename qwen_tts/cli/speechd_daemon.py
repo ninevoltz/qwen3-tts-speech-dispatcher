@@ -4,9 +4,9 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import re
 import socket
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
 
@@ -15,103 +15,23 @@ import torch
 
 from qwen_tts import Qwen3TTSModel, VoiceClonePromptItem
 from qwen_tts.cli.speechd_provider import _resolve_speaker, _select_device_and_dtype
+from qwen_tts.cli.speechd_text_sanitize import sanitize_speechd_text
+
+
+def _append_daemon_log(message: str) -> None:
+    log_file = os.environ.get("QWEN_SPEECHD_LOG", "/tmp/qwen3-tts-speechd.log")
+    try:
+        with open(log_file, "a", encoding="utf-8", errors="replace") as f:
+            f.write(f"[{datetime.now().astimezone().isoformat(timespec='seconds')}] {message}\n")
+    except Exception:
+        pass
 
 
 def _load_text(s: Optional[str]) -> str:
-    text = re.sub(r"\s+", " ", (s or "")).strip()
-    if not text:
+    text = sanitize_speechd_text(s or "")
+    if not text.strip():
         raise ValueError("No input text provided")
     return text
-
-
-_DIGIT_WORDS = {
-    "0": "zero",
-    "1": "one",
-    "2": "two",
-    "3": "three",
-    "4": "four",
-    "5": "five",
-    "6": "six",
-    "7": "seven",
-    "8": "eight",
-    "9": "nine",
-}
-_SEP_WORDS = {
-    "-": "dash",
-    "/": "slash",
-    "_": "underscore",
-}
-
-
-def _normalize_english_text(text: str) -> str:
-    # Expand all-caps initialisms and any alnum model/part tokens to reduce
-    # multilingual pronunciation drift (e.g. RX-7800XT -> R X dash seven ...).
-    token_re = re.compile(r"[A-Za-z0-9][A-Za-z0-9_/-]*")
-
-    def _expand_token(tok: str) -> str:
-        if tok.isdigit():
-            return " ".join(_DIGIT_WORDS.get(ch, ch) for ch in tok)
-
-        if any(ch.isdigit() for ch in tok):
-            out = []
-            for ch in tok:
-                if ch.isdigit():
-                    out.append(_DIGIT_WORDS.get(ch, ch))
-                elif ch.isalpha():
-                    out.append(ch.upper())
-                elif ch in _SEP_WORDS:
-                    out.append(_SEP_WORDS[ch])
-            return " ".join(out) if out else tok
-
-        if re.fullmatch(r"[A-Z]{2,}", tok):
-            return " ".join(tok)
-
-        return tok
-
-    return token_re.sub(lambda m: _expand_token(m.group(0)), text)
-
-
-def _normalize_clone_text(text: str) -> str:
-    # Clone prompting is sensitive to punctuation-heavy strings in some cases.
-    # Keep sentence punctuation, but make token separators explicit and stable.
-    out = text
-    out = out.replace("’", "'").replace("`", "'")
-    out = out.replace("“", '"').replace("”", '"')
-    out = out.replace("/", " slash ")
-    out = re.sub(r"(?<=\w)'(?=\w)", "", out)
-    out = re.sub(r"\s+", " ", out).strip()
-    return out
-
-
-def _fallback_clone_text(text: str) -> str:
-    # Conservative fallback used only if clone generation fails.
-    out = _normalize_clone_text(text)
-    out = out.replace(".", ",")
-    out = re.sub(r"[;:!?]", ",", out)
-    out = re.sub(r",\s*,+", ", ", out)
-    out = re.sub(r"\s+", " ", out).strip(" ,")
-    return out
-
-
-def _fallback_voice_design_text(text: str) -> str:
-    # Keep content intact but de-emphasize hard sentence boundaries that can
-    # occasionally destabilize generation for some prompts.
-    out = text.replace(".", ",")
-    out = re.sub(r"[;:!?]", ",", out)
-    out = re.sub(r",\s*,+", ", ", out)
-    out = re.sub(r"\s+", " ", out).strip(" ,")
-    return out
-
-
-def _normalize_voice_design_text(text: str) -> str:
-    # VoiceDesign can become unstable on hard sentence boundaries in long lines.
-    # Convert strong punctuation to soft pauses before generation.
-    out = text.replace("...", ", ")
-    out = out.replace(".", ", ")
-    out = re.sub(r"[;:!?]", ", ", out)
-    out = re.sub(r",\s*,+", ", ", out)
-    out = re.sub(r"\s+", " ", out).strip(" ,")
-    return out
 
 
 def _load_voice_clone_prompt_items(path: str) -> List[VoiceClonePromptItem]:
@@ -195,17 +115,12 @@ def _build_parser() -> argparse.ArgumentParser:
         default=str(os.environ.get("QWEN_SPEECHD_RESPECT_SD_LANGUAGE", "")).lower() in {"1", "true", "yes", "on"},
         help="If set, prefer Speech Dispatcher LANGUAGE over configured/default language.",
     )
-    p.add_argument(
-        "--normalize-english-text",
-        action="store_true",
-        default=str(os.environ.get("QWEN_SPEECHD_NORMALIZE_ENGLISH_TEXT", "1")).lower() in {"1", "true", "yes", "on"},
-        help="Normalize numbers/acronyms/model identifiers when language is English.",
-    )
+    seed_env = os.environ.get("QWEN_SPEECHD_SEED")
     p.add_argument(
         "--seed",
         type=int,
-        default=int(os.environ.get("QWEN_SPEECHD_SEED", "1234")),
-        help="Deterministic seed for generation to reduce run-to-run variation.",
+        default=(int(seed_env) if seed_env is not None and str(seed_env).strip() != "" else None),
+        help="Optional deterministic seed for generation. If unset, use model default randomness.",
     )
     p.add_argument(
         "--do-sample",
@@ -230,33 +145,6 @@ def _build_parser() -> argparse.ArgumentParser:
         type=int,
         default=int(os.environ.get("QWEN_SPEECHD_MAX_NEW_TOKENS_VOICE_DESIGN", "768")),
         help="Generation max_new_tokens specifically for voice_design mode.",
-    )
-    p.add_argument(
-        "--normalize-clone-text",
-        action="store_true",
-        default=str(os.environ.get("QWEN_SPEECHD_NORMALIZE_CLONE_TEXT", "1")).lower() in {"1", "true", "yes", "on"},
-        help="Normalize punctuation for voice_clone_prompt mode before generation.",
-    )
-    p.add_argument(
-        "--retry-clone-with-safe-punctuation",
-        action="store_true",
-        default=str(os.environ.get("QWEN_SPEECHD_RETRY_CLONE_WITH_SAFE_PUNCT", "1")).lower()
-        in {"1", "true", "yes", "on"},
-        help="Retry clone generation with conservative punctuation if the first attempt fails.",
-    )
-    p.add_argument(
-        "--retry-voice-design-with-safe-punctuation",
-        action="store_true",
-        default=str(os.environ.get("QWEN_SPEECHD_RETRY_VOICE_DESIGN_WITH_SAFE_PUNCT", "1")).lower()
-        in {"1", "true", "yes", "on"},
-        help="Retry voice_design generation with conservative punctuation if the first attempt fails.",
-    )
-    p.add_argument(
-        "--normalize-voice-design-text",
-        action="store_true",
-        default=str(os.environ.get("QWEN_SPEECHD_NORMALIZE_VOICE_DESIGN_TEXT", "1")).lower()
-        in {"1", "true", "yes", "on"},
-        help="Normalize punctuation before voice_design generation.",
     )
     p.add_argument("--max-new-tokens", type=int, default=int(os.environ.get("QWEN_SPEECHD_MAX_NEW_TOKENS", "384")))
     return p
@@ -300,16 +188,11 @@ def _handle_conn(
     default_instruct: str,
     respect_sd_voice: bool,
     respect_sd_language: bool,
-    normalize_english_text: bool,
-    seed: int,
+    seed: Optional[int],
     do_sample: bool,
     subtalker_dosample: bool,
     max_new_tokens_clone: int,
     max_new_tokens_voice_design: int,
-    normalize_clone_text: bool,
-    retry_clone_with_safe_punctuation: bool,
-    retry_voice_design_with_safe_punctuation: bool,
-    normalize_voice_design_text: bool,
     max_new_tokens: int,
 ) -> None:
     try:
@@ -330,8 +213,6 @@ def _handle_conn(
             raise ValueError(
                 f"Daemon is running in mode={mode!r}, but request asked for mode={request_mode!r}. Restart daemon with desired mode."
             )
-        if normalize_english_text and str(language).strip().lower() == "english":
-            text = _normalize_english_text(text)
         if respect_sd_voice:
             requested_speaker = req.get("voice") or req.get("speaker") or default_speaker
         else:
@@ -342,67 +223,42 @@ def _handle_conn(
 
         # The model object is not guaranteed thread-safe; serialize generation.
         with synth_lock:
-            torch.manual_seed(seed)
-            if torch.cuda.is_available():
-                torch.cuda.manual_seed_all(seed)
+            if seed is not None:
+                torch.manual_seed(seed)
+                if torch.cuda.is_available():
+                    torch.cuda.manual_seed_all(seed)
             if mode == "voice_design":
-                design_text = _normalize_voice_design_text(text) if normalize_voice_design_text else text
-                try:
-                    wavs, sr = tts.generate_voice_design(
-                        text=design_text,
-                        language=language,
-                        instruct=instruct or "",
-                        do_sample=do_sample,
-                        subtalker_dosample=subtalker_dosample,
-                        max_new_tokens=max_new_tokens_voice_design,
-                        non_streaming_mode=True,
-                    )
-                except Exception:
-                    if not retry_voice_design_with_safe_punctuation:
-                        raise
-                    safe_text = _fallback_voice_design_text(design_text)
-                    if not safe_text or safe_text == design_text:
-                        raise
-                    wavs, sr = tts.generate_voice_design(
-                        text=safe_text,
-                        language=language,
-                        instruct=instruct or "",
-                        do_sample=do_sample,
-                        subtalker_dosample=subtalker_dosample,
-                        max_new_tokens=max_new_tokens_voice_design,
-                        non_streaming_mode=True,
-                    )
+                _append_daemon_log(
+                    f'daemon synth mode=voice_design lang={language} chars={len(text)} max_new_tokens={max_new_tokens_voice_design} text="{text}"'
+                )
+                # Match app.py voice_design behavior as closely as possible.
+                wavs, sr = tts.generate_voice_design(
+                    text=text,
+                    language=language,
+                    instruct=instruct or "",
+                    max_new_tokens=max_new_tokens_voice_design,
+                    non_streaming_mode=True,
+                )
             elif mode == "voice_clone_prompt":
                 if not voice_clone_prompt_items:
                     raise ValueError("voice_clone_prompt mode requires a loaded prompt file")
-                clone_text = _normalize_clone_text(text) if normalize_clone_text else text
-                try:
-                    wavs, sr = tts.generate_voice_clone(
-                        text=clone_text,
-                        language=language,
-                        voice_clone_prompt=voice_clone_prompt_items,
-                        do_sample=do_sample,
-                        subtalker_dosample=subtalker_dosample,
-                        max_new_tokens=max_new_tokens_clone,
-                        non_streaming_mode=True,
-                    )
-                except Exception:
-                    if not retry_clone_with_safe_punctuation:
-                        raise
-                    safe_clone_text = _fallback_clone_text(clone_text)
-                    if not safe_clone_text or safe_clone_text == clone_text:
-                        raise
-                    wavs, sr = tts.generate_voice_clone(
-                        text=safe_clone_text,
-                        language=language,
-                        voice_clone_prompt=voice_clone_prompt_items,
-                        do_sample=do_sample,
-                        subtalker_dosample=subtalker_dosample,
-                        max_new_tokens=max_new_tokens_clone,
-                        non_streaming_mode=True,
-                    )
+                _append_daemon_log(
+                    f'daemon synth mode=voice_clone_prompt lang={language} chars={len(text)} text="{text}"'
+                )
+                wavs, sr = tts.generate_voice_clone(
+                    text=text,
+                    language=language,
+                    voice_clone_prompt=voice_clone_prompt_items,
+                    do_sample=do_sample,
+                    subtalker_dosample=subtalker_dosample,
+                    max_new_tokens=max_new_tokens_clone,
+                    non_streaming_mode=True,
+                )
             else:
                 speaker = _resolve_speaker(tts, requested_speaker, fallback=default_speaker)
+                _append_daemon_log(
+                    f'daemon synth mode=custom_voice lang={language} speaker={speaker} chars={len(text)} text="{text}"'
+                )
                 wavs, sr = tts.generate_custom_voice(
                     text=text,
                     language=language,
@@ -415,6 +271,11 @@ def _handle_conn(
                 )
         if not wavs:
             raise RuntimeError("Model returned empty audio")
+        try:
+            duration_s = float(len(wavs[0])) / float(sr)
+            _append_daemon_log(f"daemon synth ok mode={mode} sr={int(sr)} duration_s={duration_s:.2f}")
+        except Exception:
+            pass
         out = Path(output)
         out.parent.mkdir(parents=True, exist_ok=True)
         sf.write(str(out), wavs[0], int(sr), subtype="PCM_16")
@@ -476,16 +337,11 @@ def main() -> int:
             args.instruct,
             args.respect_sd_voice,
             args.respect_sd_language,
-            args.normalize_english_text,
             args.seed,
             args.do_sample,
             args.subtalker_dosample,
             args.max_new_tokens_clone,
             args.max_new_tokens_voice_design,
-            args.normalize_clone_text,
-            args.retry_clone_with_safe_punctuation,
-            args.retry_voice_design_with_safe_punctuation,
-            args.normalize_voice_design_text,
             args.max_new_tokens,
         )
 

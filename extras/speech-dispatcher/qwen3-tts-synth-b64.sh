@@ -17,8 +17,17 @@ else
   TEXT_INPUT="$(cat)"
 fi
 
-TEXT_INPUT="$(printf '%s' "${TEXT_INPUT}" | tr '\n' ' ' | sed -E 's/[[:space:]]+/ /g; s/^ //; s/ $//')"
-if [[ -z "${TEXT_INPUT}" ]]; then
+sanitize_text() {
+  "${PYTHON_BIN}" -c '
+import sys
+from qwen_tts.cli.speechd_text_sanitize import sanitize_speechd_text
+sys.stdout.write(sanitize_speechd_text(sys.argv[1]))
+' "${1}"
+}
+
+TEXT_INPUT="$(sanitize_text "${TEXT_INPUT}")"
+
+if [[ -z "${TEXT_INPUT//[$' \t\r\n']/}" ]]; then
   printf '[%s] empty text\n' "$(date -Is)" >> "${LOG_FILE}" 2>/dev/null || true
   exit 0
 fi

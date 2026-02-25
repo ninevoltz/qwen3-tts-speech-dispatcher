@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import argparse
 import os
-import re
 import sys
 from pathlib import Path
 from typing import Dict, Optional
@@ -19,6 +18,7 @@ import soundfile as sf
 import torch
 
 from qwen_tts import Qwen3TTSModel
+from qwen_tts.cli.speechd_text_sanitize import sanitize_speechd_text
 
 # Basic aliases from common speech-dispatcher symbolic voices.
 VOICE_ALIASES: Dict[str, str] = {
@@ -68,9 +68,8 @@ def _load_text(text_arg: Optional[str]) -> str:
     else:
         raw = sys.stdin.read()
 
-    # Speech Dispatcher can send multiline chunks; collapse whitespace.
-    text = re.sub(r"\s+", " ", raw).strip()
-    if not text:
+    text = sanitize_speechd_text(raw)
+    if not text.strip():
         raise ValueError("No input text provided")
     return text
 

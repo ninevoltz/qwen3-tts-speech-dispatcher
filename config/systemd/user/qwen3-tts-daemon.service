@@ -13,14 +13,14 @@ WorkingDirectory=/home/john/git-projects/qwen3-tts-speech-dispatcher/
 Environment=QWEN_SPEECHD_MODE=voice_design
 
 Environment=QWEN_SPEECHD_MAX_NEW_TOKENS=2048
-Environment=QWEN_SPEECHD_MAX_NEW_TOKENS_VOICE_DESIGN=192
+Environment=QWEN_SPEECHD_MAX_NEW_TOKENS_VOICE_DESIGN=2048
 Environment=QWEN_SPEECHD_NORMALIZE_VOICE_DESIGN_TEXT=1
 Environment=OMP_NUM_THREADS=16
 Environment=MKL_NUM_THREADS=16
 Environment=QWEN_SPEECHD_INSTRUCT="Speak clearly in a female voice. Spell out acronyms and initialisms. Expand part/model numbers character-by-character. Do not pause on hyphenated phrases."
 Environment=QWEN_SPEECHD_SPEAKER=Serena
 Environment=QWEN_SPEECHD_RESPECT_SD_VOICE=0
-Environment=QWEN_SPEECHD_LANGUAGE=english
+Environment=QWEN_SPEECHD_LANGUAGE=English
 Environment=QWEN_SPEECHD_RESPECT_SD_LANGUAGE=0
 Environment=QWEN_SPEECHD_NORMALIZE_ENGLISH_TEXT=1
 Environment=QWEN_SPEECHD_SEED=1974045

@@ -4,16 +4,17 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import re
 import socket
 import sys
 from typing import Optional
 
+from qwen_tts.cli.speechd_text_sanitize import sanitize_speechd_text
+
 
 def _load_text(text_arg: Optional[str]) -> str:
     raw = text_arg if text_arg is not None else sys.stdin.read()
-    text = re.sub(r"\s+", " ", raw).strip()
-    if not text:
+    text = sanitize_speechd_text(raw)
+    if not text.strip():
         raise ValueError("No input text provided")
     return text
 
