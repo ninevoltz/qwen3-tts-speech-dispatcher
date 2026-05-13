@@ -116,18 +116,6 @@ play_audio_file() {
       play_ok=0
     fi
   fi
-  if [[ ${play_ok} -ne 0 ]] && command -v aplay >/dev/null 2>&1; then
-    printf '[%s] playback: aplay\n' "$(date -Is)"
-    if aplay -q "${wav_path}" >/dev/null 2>&1; then
-      play_ok=0
-    fi
-  fi
-  if [[ ${play_ok} -ne 0 ]] && command -v play >/dev/null 2>&1; then
-    printf '[%s] playback: play\n' "$(date -Is)"
-    if play -q "${wav_path}" >/dev/null 2>&1; then
-      play_ok=0
-    fi
-  fi
   if [[ ${play_ok} -ne 0 ]]; then
     printf '[%s] playback failed for all commands\n' "$(date -Is)"
     return 1

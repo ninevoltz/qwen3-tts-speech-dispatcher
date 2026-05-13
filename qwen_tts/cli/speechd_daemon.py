@@ -123,18 +123,6 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Optional deterministic seed for generation. If unset, use model default randomness.",
     )
     p.add_argument(
-        "--do-sample",
-        action="store_true",
-        default=str(os.environ.get("QWEN_SPEECHD_DO_SAMPLE", "0")).lower() in {"1", "true", "yes", "on"},
-        help="Enable sampling in generation (less deterministic).",
-    )
-    p.add_argument(
-        "--subtalker-dosample",
-        action="store_true",
-        default=str(os.environ.get("QWEN_SPEECHD_SUBTALKER_DOSAMPLE", "0")).lower() in {"1", "true", "yes", "on"},
-        help="Enable sub-talker sampling (less deterministic).",
-    )
-    p.add_argument(
         "--max-new-tokens-clone",
         type=int,
         default=int(os.environ.get("QWEN_SPEECHD_MAX_NEW_TOKENS_CLONE", "768")),
@@ -189,8 +177,6 @@ def _handle_conn(
     respect_sd_voice: bool,
     respect_sd_language: bool,
     seed: Optional[int],
-    do_sample: bool,
-    subtalker_dosample: bool,
     max_new_tokens_clone: int,
     max_new_tokens_voice_design: int,
     max_new_tokens: int,
@@ -262,15 +248,14 @@ def _handle_conn(
             else:
                 speaker = _resolve_speaker(tts, requested_speaker, fallback=default_speaker)
                 _append_daemon_log(
-                    f'daemon synth mode=custom_voice lang={language} speaker={speaker} chars={len(text)} text="{text}"'
+                    f'daemon synth mode=custom_voice lang={language} speaker={speaker} chars={len(text)} max_new_tokens={max_new_tokens} text="{text}"'
                 )
+                # Match app.py custom_voice behavior as closely as possible.
                 wavs, sr = tts.generate_custom_voice(
-                    text=text,
+                    text=text.strip(),
                     language=language,
-                    speaker=speaker,
-                    instruct=instruct or "",
-                    do_sample=do_sample,
-                    subtalker_dosample=subtalker_dosample,
+                    speaker=speaker.lower().replace(" ", "_"),
+                    instruct=instruct.strip() if instruct else None,
                     max_new_tokens=max_new_tokens,
                     non_streaming_mode=True,
                 )
@@ -343,8 +328,6 @@ def main() -> int:
             args.respect_sd_voice,
             args.respect_sd_language,
             args.seed,
-            args.do_sample,
-            args.subtalker_dosample,
             args.max_new_tokens_clone,
             args.max_new_tokens_voice_design,
             args.max_new_tokens,
